@@ -18,7 +18,7 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 
-logger = logging.getLogger("image_processor")
+logger = logging.getLogger("video.images")
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 

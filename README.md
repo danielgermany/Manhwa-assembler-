@@ -2,7 +2,7 @@
 
 Automated Python pipeline that turns manhwa panels + a script into a finished YouTube-ready video.
 
-**Pipeline:** `script.txt` + `images/` + `music.mp3` → ElevenLabs voiceover → timed captions → Ken Burns'd video → 1080p MP4
+**Pipeline:** `script.txt` + `images/` + `timeline.json` + `music.mp3` → per-sentence ElevenLabs voiceover → audio-synced panels → Ken Burns'd video → 1080p MP4
 
 ---
 
@@ -28,22 +28,39 @@ For the **TextClip caption overlay**, MoviePy needs **ImageMagick** installed:
 
 ### 2. Configure API keys
 
+```bash
+cp config.example.json config.json
+```
+
 Edit `config.json` and fill in:
 - `elevenlabs_api_key` - get from https://elevenlabs.io/app/settings/api-keys
 - `elevenlabs_voice_id` - get from https://elevenlabs.io/app/voice-library (pick a voice, copy its ID)
+
+`config.json` is gitignored — never commit API keys.
 
 ### 3. Set up your project folder
 
 ```
 manhwa_assembler/
 ├── input/
-│   ├── images/          ← drop panel screenshots here (panel_001.jpg, panel_002.jpg, ...)
+│   ├── images/          ← drop panel screenshots here (001-panel.png, ...)
 │   ├── script.txt       ← your narration text
+│   ├── timeline.json    ← panel order + scene segments (required for audio-sync)
 │   └── music.mp3        ← background track (optional)
 ├── output/              ← final video appears here
-├── assembly_script.py
-├── config.json
+│   ├── voice_chunks/    ← cached per-sentence MP3s
+│   ├── sync_plan.json     ← panel timing plan (review before render)
+│   └── sync_sheet_audio.csv
+├── assembly_script.py           # CLI entry point
+├── config.example.json
+├── config.json                  # local only (gitignored)
 └── modules/
+    ├── config.py                # AssemblyConfig + ProjectPaths
+    ├── pipeline.py              # AssemblyPipeline orchestrator
+    ├── common/utils.py
+    ├── sync/                    # script parsing, timeline, panel mapping
+    ├── audio/voice.py           # ElevenLabs TTS
+    └── video/                   # assembler, images, captions
 ```
 
 ### 4. Run
@@ -59,21 +76,65 @@ That's it. Coffee break. Come back in 10–15 min, `output/final_video.mp4` is r
 ## Usage Modes
 
 ```bash
-# Standard run
+# Standard run (audio-synced pacing — default)
 python assembly_script.py
 
-# Dry run (validate inputs without rendering)
+# Dry run (validate inputs, build sync plan, no API calls or render)
 python assembly_script.py --dry-run
 
 # Quick preview (renders only first 60 seconds for QA)
 python assembly_script.py --preview
 
-# Reuse existing voiceover.mp3 (saves API credits during iteration)
+# Reuse cached voice chunks + voiceover.mp3 (saves API credits during iteration)
 python assembly_script.py --skip-voiceover
+
+# Legacy word-count pacing from timeline.json dur fields
+python assembly_script.py --legacy-sync
 
 # Speed up/slow down narration
 python assembly_script.py --speed 1.1
 ```
+
+---
+
+## Audio-Synced Panel Pacing (default)
+
+By default, the assembler generates **one ElevenLabs TTS call per sentence** and uses the **real MP3 duration** of each line to time panels:
+
+- The **primary panel** for a sentence holds until that line finishes playing.
+- **Extra panels** mapped to the same sentence get a brief flash after the line (default 0.25s each), with matching silence inserted in the voiceover so audio and video stay locked.
+- When a scene has more sentences than panels, consecutive sentences are merged onto one panel (no mid-line cuts).
+
+Review the generated schedule before rendering:
+
+- `output/sync_plan.json` — machine-readable panel plan
+- `output/sync_sheet_audio.csv` — open in a spreadsheet
+
+Cached sentence audio lives in `output/voice_chunks/`. Re-rendering video is cheap with `--skip-voiceover`.
+
+Config keys in `config.json`:
+
+- `extra_panel_flash_duration` — seconds per flash panel (default `0.25`)
+- `inter_sentence_pause_ms` — optional gap between sentences (default `0`)
+- `voice_chunk_cache_dir` — where per-sentence MP3s are stored
+
+**API cost:** ~150 ElevenLabs calls for a typical chapter script (~$0.30–0.45, similar to one monolithic call).
+
+Use `--legacy-sync` to revert to the old `timeline.json` word-count duration estimates.
+
+### Legacy word-count pacing (`--legacy-sync`)
+
+The legacy mode times panels using **estimated** durations from `timeline.json` `dur` fields (rescaled to voiceover length), not per-sentence MP3 lengths.
+
+- Sync is at the **scene** level, not line-perfect.
+- Edit `dur` in `input/timeline.json` to tune timing.
+- Run: `python assembly_script.py --legacy-sync --skip-voiceover`
+
+### Panel pacing caveats (audio-sync)
+
+- Sync is at the **sentence** level, not word-perfect within a line.
+- Panel-to-sentence assignment is automatic within each scene; review `output/sync_sheet_audio.csv`.
+- When a scene has more sentences than panels, consecutive sentences merge onto one hold panel.
 
 ---
 
@@ -155,7 +216,9 @@ You can produce ~70 videos per month on a single Creator plan.
 
 **Captions look weird/off-timing** — the script's word distribution is approximate. For perfect sync, you'd need Whisper (add it back if you need precise word-level timing).
 
-**Video is too long/short vs audio** — `total_duration` is locked to audio length. If images feel rushed, add more images; if they feel slow, remove some.
+**"No module named audioop" / pyaudioop** — Python 3.13+ removed the `audioop` module. Install the backport: `pip install pyaudioop`
+
+**Panels still feel off** — open `output/sync_sheet_audio.csv` to review the auto mapping. Use `--legacy-sync` to revert to word-count estimates.
 
 ---
 
@@ -163,19 +226,52 @@ You can produce ~70 videos per month on a single Creator plan.
 
 ```
 manhwa_assembler/
-├── assembly_script.py             # Main entry point
-├── config.json                     # API keys + settings
+├── assembly_script.py             # Thin CLI entry point
+├── config.example.json            # Template (copy to config.json)
+├── config.json                    # Local API keys (gitignored)
 ├── requirements.txt
 ├── README.md
+├── input/
+│   ├── script.txt
+│   ├── timeline.json
+│   ├── images/
+│   └── music.mp3                  # optional
+├── output/                        # gitignored
 └── modules/
-    ├── __init__.py
-    ├── script_processor.py        # Parses script.txt
-    ├── voice_generator.py         # ElevenLabs API client
-    ├── caption_generator.py       # Builds .srt from script
-    ├── image_processor.py         # Ken Burns effects
-    ├── video_assembler.py         # MoviePy composition
-    └── utils.py                   # Logging + validation
+    ├── config.py                  # AssemblyConfig, ProjectPaths
+    ├── pipeline.py                # AssemblyPipeline orchestrator
+    ├── common/
+    │   └── utils.py               # Logging, validation, formatting
+    ├── sync/
+    │   ├── script.py              # Parse script.txt
+    │   ├── timeline.py            # Load timeline.json
+    │   └── mapper.py              # Panel/sentence sync plan
+    ├── audio/
+    │   └── voice.py               # ElevenLabs TTS + chunk concat
+    └── video/
+        ├── assembler.py           # MoviePy composition
+        ├── images.py              # Ken Burns effects
+        └── captions.py            # SRT generation (optional)
 ```
+
+---
+
+## Development
+
+Validate the pipeline without API calls or rendering:
+
+```bash
+python assembly_script.py --dry-run
+python assembly_script.py --dry-run --legacy-sync
+```
+
+Module map:
+- **`modules/pipeline.py`** — orchestrates audio-sync and legacy flows
+- **`modules/sync/`** — script parsing, timeline I/O, panel-to-sentence mapping
+- **`modules/audio/`** — per-sentence ElevenLabs generation
+- **`modules/video/`** — image processing and final MP4 export
+
+Deprecated top-level shims (`modules/voice_generator.py`, etc.) re-export from the new subpackages for backward compatibility.
 
 ---
 

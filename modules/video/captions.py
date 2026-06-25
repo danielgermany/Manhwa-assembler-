@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import List, Tuple
 
-logger = logging.getLogger("caption_generator")
+logger = logging.getLogger("video.captions")
 
 
 def _seconds_to_srt_time(seconds: float) -> str:

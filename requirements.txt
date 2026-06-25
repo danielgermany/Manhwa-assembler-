@@ -3,5 +3,7 @@ opencv-python>=4.8.0
 numpy>=1.24.0
 requests>=2.31.0
 pydub>=0.25.1
+mutagen>=1.47.0
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.9
+audioop-lts>=0.2.1; python_version >= "3.13"

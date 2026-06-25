@@ -1,0 +1,19 @@
+# Local config with API keys
+config.json
+
+# Runtime output
+output/
+assembly.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# OS
+.DS_Store
+
+# Panel images (large binaries — keep .gitkeep only)
+input/images/*
+!input/images/.gitkeep

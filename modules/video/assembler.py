@@ -29,13 +29,13 @@ from moviepy.video.VideoClip import TextClip, VideoClip
 from moviepy.video.fx.fadein import fadein
 from moviepy.video.fx.fadeout import fadeout
 
-from modules.caption_generator import parse_srt
-from modules.image_processor import (
+from modules.video.captions import parse_srt
+from modules.video.images import (
     fit_image_to_canvas,
     get_ken_burns_frame_function,
 )
 
-logger = logging.getLogger("video_assembler")
+logger = logging.getLogger("video.assembler")
 
 
 def assemble_video(
@@ -47,6 +47,7 @@ def assemble_video(
     config: dict,
     preview_mode: bool = False,
     image_durations: List[float] = None,
+    audio_sync_mode: bool = False,
 ) -> Path:
     """
     Assemble the final video.
@@ -96,14 +97,20 @@ def assemble_video(
     # behaviour of spreading every image evenly across the audio.
     if image_durations is not None and len(image_durations) == len(image_paths):
         durations = [float(d) for d in image_durations]
-        # Rescale so the durations sum to exactly the (possibly preview-trimmed)
-        # audio length - keeps video locked to audio with no drift.
-        scale = total_duration / sum(durations)
-        durations = [d * scale for d in durations]
-        logger.info(
-            f"  Total duration: {total_duration:.1f}s | {len(image_paths)} images "
-            f"(SCRIPT-SYNCED pacing, {min(durations):.2f}s-{max(durations):.2f}s per image)"
-        )
+        if audio_sync_mode:
+            logger.info(
+                f"  Total duration: {total_duration:.1f}s | {len(image_paths)} images "
+                f"(AUDIO-SYNCED pacing, {min(durations):.2f}s-{max(durations):.2f}s per image)"
+            )
+        else:
+            # Rescale so the durations sum to exactly the (possibly preview-trimmed)
+            # audio length - keeps video locked to audio with no drift.
+            scale = total_duration / sum(durations)
+            durations = [d * scale for d in durations]
+            logger.info(
+                f"  Total duration: {total_duration:.1f}s | {len(image_paths)} images "
+                f"(SCRIPT-SYNCED pacing, {min(durations):.2f}s-{max(durations):.2f}s per image)"
+            )
     else:
         per_image_duration = total_duration / len(image_paths)
         durations = [per_image_duration] * len(image_paths)
@@ -194,7 +201,7 @@ def assemble_video(
     video.write_videofile(
         str(output_path),
         fps=fps,
-        codec="h264_nvenc",
+        codec="libx264",
         audio_codec="aac",
         audio_bitrate="192k",
         bitrate="6000k",
